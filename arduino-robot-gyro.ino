@@ -505,8 +505,8 @@ void loop() {
                 coords.y = 0;
                 Serial.print("STATE_NEW_ROUTE:   new distance: ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(startAngle);Serial.println(" rad");
               } else if (travelDistance > DISTANCE_FOR_NEW_ROUTE_MIN_2) {
-                travelDistance = hypot(coords.x, (travelDistance - coords.y) * 2);
-                startAngle = asin(coords.x / travelDistance) + startAngle;
+                //travelDistance = hypot(coords.x, (travelDistance - coords.y) * 2);
+                startAngle = asin(coords.x / travelDistance) / 2 + startAngle;
                 if (startAngle <= -180 || startAngle >= 180) startAngle = -startAngle;
                 coords.x = 0;
                 coords.y = 0;
