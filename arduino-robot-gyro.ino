@@ -500,14 +500,14 @@ void loop() {
               if (travelDistance > DISTANCE_FOR_NEW_ROUTE_MIN_1) {
                 //startAngle = asin(abs(coords.x) / travelDistance * coords.x) + startAngle * sign(courseAngle);
                 startAngle = asin(coords.x / travelDistance) + startAngle;
-                if (startAngle <= -180 || startAngle >= 180) startAngle = -startAngle;
+                //if (startAngle <= -180 || startAngle >= 180) startAngle = -startAngle;
                 coords.x = 0;
                 coords.y = 0;
                 Serial.print("STATE_NEW_ROUTE:   new distance: ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(startAngle);Serial.println(" rad");
               } else if (travelDistance > DISTANCE_FOR_NEW_ROUTE_MIN_2) {
                 //travelDistance = hypot(coords.x, (travelDistance - coords.y) * 2);
                 startAngle = asin(coords.x / travelDistance) / 2 + startAngle;
-                if (startAngle <= -180 || startAngle >= 180) startAngle = -startAngle;
+                //if (startAngle <= -180 || startAngle >= 180) startAngle = -startAngle;
                 coords.x = 0;
                 coords.y = 0;
                 Serial.print("STATE_NEW_ROUTE:   new distance (smoothed): ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(startAngle);Serial.println(" rad");
@@ -528,7 +528,7 @@ void loop() {
               if (distance_FrontMid <= DISTANCE_MIN3) {
                 motorsState = 'r';
                 motor1.setSpeed(BASE_MOTOR_SPEED);
-                motor2.setSpeed(80);
+                motor2.setSpeed(BASE_MOTOR_SPEED - 50);
                 usSensor_FrontMid.printDistanceToSerial();
               } else {
                 motor1.setSpeed(BASE_MOTOR_SPEED);
@@ -710,6 +710,13 @@ void loop() {
           yaw += (ANGLE_ERROR_RATIO_2 * travelTime - ANGLE_ERROR_BASE_ERROR - ANGLE_ERROR_RATIO_1 * ANGLE_ERROR_CHANGE_ERROR_TIME);
           
         courseAngle = yaw + startAngle;
+
+        // gyroscope starts to show opposite values when it turns more then 180 grad. left or right along any axis
+        // but we need to work with values above 180 grad.
+        if (abs(courseAngle) > 180) {
+          courseAngle = -sign(courseAngle) * (2 * M_PI - abs(yaw)); 
+        }
+        
         Serial.print("course: ");Serial.println(courseAngle * RADIANS_TO_DEGREES);
 
         coords.x += v * sin(courseAngle) * dt;
