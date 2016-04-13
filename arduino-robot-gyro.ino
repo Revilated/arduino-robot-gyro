@@ -92,6 +92,8 @@ void UltraSonicSensor::printDistanceToSerial()
 #define TRAVEL_DISTANCE 10 // meters
 
 #define BASE_MOTOR_SPEED 150
+#define BASE_MOTOR_SPEED_MIN 100
+#define BASE_MOTOR_SPEED_MAX 180
 
 #define STATE_ON_ROUTE 0
 #define STATE_CORRECT_COURSE 1
@@ -476,13 +478,13 @@ void loop() {
             break;
           case STATE_CORRECT_COURSE:
             courseAngle += correctionAngle;
-            speedRatio = lround(1.5 * map(lround(abs(courseAngle * RADIANS_TO_DEGREES)), 0, 180, 0, 255));
-            Serial.print("mappedOld: ");Serial.println(speedRatio);
-            speedRatio = lround(4 * map(lround(abs(courseAngle * RADIANS_TO_DEGREES)), 0, 180, 0, 80));
+            //speedRatio = lround(1.5 * map(lround(abs(courseAngle * RADIANS_TO_DEGREES)), 0, 180, 0, 255));
+            //Serial.print("mappedOld: ");Serial.println(speedRatio);
+            speedRatio = lround(4 * map(lround(abs(courseAngle * RADIANS_TO_DEGREES)), 0, 180, 0, BASE_MOTOR_SPEED_MAX - BASE_MOTOR_SPEED_MIN));
             Serial.print("mappedNew: ");Serial.println(speedRatio);
             {
-              int speed1 = constrain(BASE_MOTOR_SPEED - sign(courseAngle) * speedRatio, 100, 180);
-              int speed2 = constrain(BASE_MOTOR_SPEED + sign(courseAngle) * speedRatio, 100, 180);
+              int speed1 = constrain(BASE_MOTOR_SPEED - sign(courseAngle) * speedRatio, BASE_MOTOR_SPEED_MIN, BASE_MOTOR_SPEED_MAX);
+              int speed2 = constrain(BASE_MOTOR_SPEED + sign(courseAngle) * speedRatio, BASE_MOTOR_SPEED_MIN, BASE_MOTOR_SPEED_MAX);
               motor1.setSpeed(speed1);
               motor2.setSpeed(speed2);
               Serial.print("motor1: ");Serial.print(speed1);
