@@ -3,7 +3,7 @@
 #include "I2Cdev.h"
 
 #include <math.h>
-
+#include <NewPing.h>
 #include <AFMotor.h> //motor shield library
 
 #include "MPU6050_6Axis_MotionApps20.h"
@@ -67,8 +67,8 @@ void UltraSonicSensor::printDistanceToSerial()
   Serial.println("-------------------------");  
 }
 
-#define TRIG_PIN_FRONT_MID 43 // sensors' pins
-#define ECHO_PIN_FRONT_MID 42 
+#define TRIG_PIN_FRONT_MID 46 // sensors' pins
+#define ECHO_PIN_FRONT_MID 47 
 #define TRIG_PIN_FRONT_LEFT 8
 #define ECHO_PIN_FRONT_LEFT 7
 #define TRIG_PIN_FRONT_RIGHT 4
@@ -78,7 +78,7 @@ void UltraSonicSensor::printDistanceToSerial()
 
 #define DMP_DATA_DELAY 0.2 //seconds
 
-#define ROBOT_VELOCITY_EQ_TO_MOTOR_SPEED_150 0.28 // 0.32 // 0.24 // (m/s)
+#define ROBOT_VELOCITY_EQ_TO_BASE_MOTOR_SPEED 0.31 // 0.28 // 0.32 // 0.24 // (m/s)
 
 #define RADIANS_TO_DEGREES 180/M_PI
 
@@ -91,9 +91,9 @@ void UltraSonicSensor::printDistanceToSerial()
 
 #define TRAVEL_DISTANCE 10 // meters
 
-#define BASE_MOTOR_SPEED 150
-#define BASE_MOTOR_SPEED_MIN 100
-#define BASE_MOTOR_SPEED_MAX 180
+#define BASE_MOTOR_SPEED 100
+#define BASE_MOTOR_SPEED_MIN 50
+#define BASE_MOTOR_SPEED_MAX 130
 
 #define STATE_ON_ROUTE 0
 #define STATE_CORRECT_COURSE 1
@@ -117,8 +117,8 @@ void UltraSonicSensor::printDistanceToSerial()
 #define NEW_ROUTE_MODE__HYPOT_TO_THE_END_POINT 0
 #define NEW_ROUTE_MODE__BACK_TO_THE_START_COURSE 1
 
-#define ANGLE_ERROR_RATIO_1 0.0847*(M_PI/180)
-#define ANGLE_ERROR_RATIO_2 0.0032*(M_PI/180)
+#define ANGLE_ERROR_RATIO_1 -0.0847*(M_PI/180)
+#define ANGLE_ERROR_RATIO_2 -0.0032*(M_PI/180)
 #define ANGLE_ERROR_CHANGE_ERROR_TIME 13.76
 #define ANGLE_ERROR_BASE_ERROR 0.1*(M_PI/180)
 
@@ -162,7 +162,8 @@ AF_DCMotor motor2(1,MOTOR12_8KHZ);
   #define DISTANCE_MIN1 5
   #define DISTANCE_MIN2 15
   #define DISTANCE_MIN3 25
-  UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
+  //UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
+  NewPing usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID, 100);
 #endif
 
 
@@ -390,7 +391,7 @@ void setup() {
     startAngle = -1000;
     coords.x = 0;
     coords.y = 0;
-    v = ROBOT_VELOCITY_EQ_TO_MOTOR_SPEED_150;
+    v = ROBOT_VELOCITY_EQ_TO_BASE_MOTOR_SPEED;
     travelDistance = TRAVEL_DISTANCE;
 
     motorsState = 'f';
@@ -433,7 +434,6 @@ void loop() {
     timer = micros();
     lastDMPReceptionTimeElapsed += dt;*/
     if (lastDMPReceptionTimeElapsed > DMP_DATA_DELAY) {
-      Serial.println(lastDMPReceptionTimeElapsed);
       while (!mpuInterrupt);
       lastDMPReceptionTimeElapsed = 0;
       blockTransmission = false;
@@ -456,10 +456,13 @@ void loop() {
           lastUSScanTimeElapsed += dt2;
           if (lastUSScanTimeElapsed >= US_SCAN_DELAY) {
             lastUSScanTimeElapsed = 0;
-            distance_FrontMid = usSensor_FrontMid.scan();
+            //mpu.setSleepEnabled(true);
+            usSensor_FrontMid.ping_timer(echoCheck);
+            /*distance_FrontMid = usSensor_FrontMid.ping_cm(); //usSensor_FrontMid.scan();
             if (distance_FrontMid <= DISTANCE_MIN3) {
               robotState = STATE_AVOID_OBSTACLE;
-            }
+            }*/
+            //mpu.setSleepEnabled(false);
           }
         #endif
 
@@ -528,10 +531,11 @@ void loop() {
           case STATE_AVOID_OBSTACLE:
             #ifdef USE_US_SENSOR
               if (distance_FrontMid <= DISTANCE_MIN3) {
-                motorsState = 'r';
+                motorsState = 's';
                 motor1.setSpeed(BASE_MOTOR_SPEED);
                 motor2.setSpeed(BASE_MOTOR_SPEED - 50);
-                usSensor_FrontMid.printDistanceToSerial();
+                //Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println("CM");
+                //usSensor_FrontMid.printDistanceToSerial();
               } else {
                 motor1.setSpeed(BASE_MOTOR_SPEED);
                 motor2.setSpeed(BASE_MOTOR_SPEED);
@@ -615,8 +619,7 @@ void loop() {
 
         
         if ((lastDMPReceptionTimeElapsed > DMP_DATA_DELAY) && (robotState != STATE_ACCELERATION)) {
-          Serial.println(lastDMPReceptionTimeElapsed);
-          while (!mpuInterrupt) {Serial.println("!mpuInterrupt2");}
+          while (!mpuInterrupt) {/*Serial.println("!mpuInterrupt2");*/}
           lastDMPReceptionTimeElapsed = 0;
           blockTransmission = false;
         } else {
@@ -863,4 +866,18 @@ int sign(double value)
     return -1;
 }
 
+#ifdef USE_US_SENSOR
+  void echoCheck() { // Timer2 interrupt calls this function every 24uS where you can check the ping status.
+    // Don't do anything here!
+    if (usSensor_FrontMid.check_timer()) { // This is how you check to see if the ping was received.
+      // Here's where you can add code.
+      distance_FrontMid = usSensor_FrontMid.ping_cm(); //usSensor_FrontMid.scan();
+      if (distance_FrontMid <= DISTANCE_MIN3) {
+        robotState = STATE_AVOID_OBSTACLE;
+        Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println(" CM");
+      }
+    }
+    // Don't do anything here!
+  }
+#endif
 
