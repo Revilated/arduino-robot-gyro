@@ -4,7 +4,7 @@
 
 #include <math.h>
 #include <NewPing.h> // ultrasonic library
-#include <AFMotor.h> // motor shield library
+//#include <AFMotor.h> // motor shield library
 
 #include "MPU6050_6Axis_MotionApps20.h"
 //#include "MPU6050.h" // not necessary if using MotionApps include file
@@ -14,6 +14,122 @@
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
     #include "Wire.h"
 #endif
+
+
+// ================================================================
+// ===                         GLOBALS                          ===
+// ================================================================
+
+// the direction of movememnt
+enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
+
+// sensors' pins
+#define TRIG_PIN_FRONT_MID 36
+#define ECHO_PIN_FRONT_MID 38
+#define TRIG_PIN_FRONT_LEFT 40
+#define ECHO_PIN_FRONT_LEFT 42
+#define TRIG_PIN_FRONT_RIGHT 44
+#define ECHO_PIN_FRONT_RIGHT 46
+
+
+
+#define DMP_DATA_DELAY 0.2                         // the delay between data packages from gyroscope (seconds)
+
+#define ROBOT_VELOCITY_EQ_TO_BASE_MOTOR_SPEED 0.38 // experimentally calculated robot's velocity (m/s)
+
+#define RADIANS_TO_DEGREES 180/M_PI
+
+//#define COURSE_DEVIATION_ERROR 2.5 // degrees
+//#define COURSE_DEVIATION_ERROR_RAD COURSE_DEVIATION_ERROR*(M_PI/180)
+
+//#define X_DEVIATION_ERROR 0.01 // meters
+#define X_DEVIATION_MAX 0.02                      // maximum x axis deviation allowed for the robot (meters)
+#define X_TURN_DEVIATION 0.02                     // maximum x axis deviation allowed for the robot (used for the TURN_STATE) (meters)
+#define COURSE_DEVIATION_MAX 60*(M_PI/180)        // maximum available deviation from course
+#define COURSE_DEVIATION_MIN 10*(M_PI/180)        // minimum available deviation from course
+#define Y_NEGATIVE_MAX -0.03                      // maximum availbale y axis negative value (used to stop the robot when it somehow starts to move in wrong direction)
+
+#define TRAVEL_DISTANCE 4                         // the distance the robot have to travel (meters)
+
+// the base speed used on motors
+#define BASE_MOTOR_SPEED 70
+#define BASE_MOTOR_SPEED_MIN 20
+#define BASE_MOTOR_SPEED_MAX 100
+
+// robot's states
+#define STATE_ON_ROUTE 0                          // just moving
+#define STATE_CORRECT_COURSE 1                    // course correction base on gyroscope values
+#define STATE_NEW_ROUTE 2                         // new route calculating, triggered when coords.x > X_DEVIATION_MAX
+#define STATE_AVOID_OBSTACLE 3                    // obstacles avoidance
+#define STATE_DISTANCE_REACHED 4                  // the robot traveled TRAVEL_DISTANCE meters
+#define STATE_ACCELERATION 5                      // used to simulate acceleration
+#define STATE_MOVE_FORWARD 6                      // forward moving without course correction
+#define STATE_WAIT 7                              // just wait for a given time
+#define STATE_TURN 8                              // not implemented yet
+
+// timers (seconds)
+#define ACCELERATION_TIME 0.5 
+#define FORWARD_MOVEMENT_TIME 3
+#define WAIT_TIME 2
+
+// the number of distances to travel
+#define DISTANCE_NUMBER 1
+
+// used for more smooth route ending
+#define DISTANCE_FOR_NEW_ROUTE_MIN_1 0.2
+#define DISTANCE_FOR_NEW_ROUTE_MIN_2 0.4
+
+// the ways to build new route when STATE_NEW_ROUTE triggered
+#define NEW_ROUTE_MODE__HYPOT_TO_THE_END_POINT 0   // in this mode the robot will build hypotenuse from the current destination to the end destination
+#define NEW_ROUTE_MODE__BACK_TO_THE_START_COURSE 1 // in this mode the robot will be trying to get back to the start course
+
+#define USE_GYROSCOPE_ERRORS                       // uncomment to try to correct gyroscope errors. In some cases errors can grow gradually at the start of the sketch  
+                                                   // so this can be helpful.
+
+// gyroscope errors
+#ifdef USE_GYROSCOPE_ERRORS
+  #define ANGLE_ERROR_RATIO_1 -0.213*(M_PI/180)//-0.175*(M_PI/180)
+  #define ANGLE_ERROR_RATIO_2 0.002*(M_PI/180)
+  #define ANGLE_ERROR_CHANGE_ERROR_TIME 13.76
+  #define ANGLE_ERROR_BASE_ERROR 0//0.1*(M_PI/180)
+#endif
+
+#define SPEED_COEFFICIENT 12                       // experimentally found. Used to calculate speedRatio 
+
+// id's of robot's sensors
+#define SENSOR_GYRO 0							                // gyroscope
+#define SENSOR_US_ALL 1							              // all available ultrasonics
+
+#define USE_US_SENSOR                           // uncomment to turn on ultrasonic sensors
+
+// set up ultra sonic sensors
+#ifdef USE_US_SENSOR
+  #define US_SCAN_DELAY 0.2 // the delay between ultrasonic scans (seconds)
+  // minimum distances to obstacles from which the robot changes its behaviour
+  #define DISTANCE_MIN1 5
+  #define DISTANCE_MIN2 15
+  #define DISTANCE_MIN3 35
+  //UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
+  NewPing usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID, 200);
+  //NewPing usSensor_FrontRight(TRIG_PIN_FRONT_RIGHT, ECHO_PIN_FRONT_RIGHT, 200);
+  //NewPing usSensor_FrontLeft(TRIG_PIN_FRONT_LEFT, ECHO_PIN_FRONT_LEFT, 200);
+#endif
+
+// uncomment "OUTPUT_READABLE_EULER" if you want to see Euler angles
+// (in degrees) calculated from the quaternions coming from the FIFO.
+// Note that Euler angles suffer from gimbal lock (for more info, see
+// http://en.wikipedia.org/wiki/Gimbal_lock)
+//#define OUTPUT_READABLE_EULER
+
+// uncomment "OUTPUT_READABLE_YAWPITCHROLL" if you want to see the yaw/
+// pitch/roll angles (in degrees) calculated from the quaternions coming
+// from the FIFO. Note this also requires gravity vector calculations.
+// Also note that yaw/pitch/roll angles suffer from gimbal lock (for
+// more info, see: http://en.wikipedia.org/wiki/Gimbal_lock)
+#define OUTPUT_READABLE_YAWPITCHROLL
+
+
+#define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
 
 // ================================================================
 // ===                     CLASS DEFINITION                     ===
@@ -71,104 +187,84 @@ void UltraSonicSensor::printDistanceToSerial()
   Serial.println("-------------------------");  
 }
 
+// a class used to contol motors
+class MotorsController
+{
+private:
+  byte speed;
+  Direction direction;
+  int drivePin1;
+  int drivePin2;
+  int PWMPin;
+  byte baseSpeed;
+public:
+  MotorsController(int drivePin1, int drivePin2, int PWMPin);
+  void run(Direction direction);
+  void setSpeed(byte speed);
+  void setBaseSpeed(byte baseSpeed);
+  byte getSpeed() const;
+  byte getBaseSpeed() const;
+  Direction getDirection() const;
+private:
+  void error(String error);
+};
+
+MotorsController::MotorsController(int drivePin1, int drivePin2, int PWMPin) : speed(0), direction(UNKNOWN), baseSpeed(BASE_MOTOR_SPEED)
+{
+  this->drivePin1 = drivePin1;
+  this->drivePin2 = drivePin2;
+  this->PWMPin = PWMPin;
+  pinMode(drivePin1, OUTPUT);
+  pinMode(drivePin2, OUTPUT);
+  pinMode(PWMPin, OUTPUT);
+}
+
+void MotorsController::run(Direction direction) 
+{
+  switch(direction) {
+    case FORWARD:
+      digitalWrite(drivePin1, HIGH);
+      digitalWrite(drivePin2, LOW);
+      break;
+    case BACKWARD:
+      digitalWrite(drivePin1, LOW);
+      digitalWrite(drivePin2, HIGH);
+      break;
+    case RELEASE:
+      digitalWrite(drivePin1, LOW);
+      digitalWrite(drivePin2, LOW);
+      break;
+    case UNKNOWN:
+      error("unknown direction");
+      break;
+    default:
+      error("wrong direction");
+  }
+}
+
+void MotorsController::setSpeed(byte speed) 
+{
+  this->speed = speed;
+  analogWrite(PWMPin, speed);
+}
+
+byte MotorsController::getSpeed() const 
+{
+  return speed;
+}
+
+Direction MotorsController::getDirection() const
+{
+  return direction;
+}
+
+void MotorsController::error(String error)
+{
+  Serial.println(String("MotorsController [ERROR]: ") + error);
+}
 // ================================================================
-// ===                         GLOBALS                          ===
+// ===                     CLASS DEFINITION END                 ===
 // ================================================================
-
-// sensors' pins
-#define TRIG_PIN_FRONT_MID 46
-#define ECHO_PIN_FRONT_MID 47 
-#define TRIG_PIN_FRONT_LEFT 8
-#define ECHO_PIN_FRONT_LEFT 7
-#define TRIG_PIN_FRONT_RIGHT 4
-#define ECHO_PIN_FRONT_RIGHT 2
-
-
-
-#define DMP_DATA_DELAY 0.2                         // the delay between data packages from gyroscope (seconds)
-
-#define ROBOT_VELOCITY_EQ_TO_BASE_MOTOR_SPEED 0.31 // experimentally calculated robot's velocity (m/s)
-
-#define RADIANS_TO_DEGREES 180/M_PI
-
-//#define COURSE_DEVIATION_ERROR 2.5 // degrees
-//#define COURSE_DEVIATION_ERROR_RAD COURSE_DEVIATION_ERROR*(M_PI/180)
-
-//#define X_DEVIATION_ERROR 0.01 // meters
-#define X_DEVIATION_MAX 0.02                      // maximum x axis deviation allowed for the robot (meters)
-#define X_TURN_DEVIATION 0.02                     // maximum x axis deviation allowed for the robot (used for the TURN_STATE) (meters)
-
-#define TRAVEL_DISTANCE 10                        // the distance the robot have to travel (meters)
-
-// the base speed used on motors
-#define BASE_MOTOR_SPEED 100 
-#define BASE_MOTOR_SPEED_MIN 50
-#define BASE_MOTOR_SPEED_MAX 130
-
-// robot's states
-#define STATE_ON_ROUTE 0                          // just moving
-#define STATE_CORRECT_COURSE 1                    // course correction base on gyroscope values
-#define STATE_NEW_ROUTE 2                         // new route calculating, triggered when coords.x > X_DEVIATION_MAX
-#define STATE_AVOID_OBSTACLE 3                    // obstacles avoidance
-#define STATE_DISTANCE_REACHED 4                  // the robot traveled TRAVEL_DISTANCE meters
-#define STATE_ACCELERATION 5                      // used to simulate acceleration
-#define STATE_MOVE_FORWARD 6                      // forward moving without course correction
-#define STATE_WAIT 7                              // just wait for a given time
-#define STATE_TURN 8                              // not implemented yet
-
-// timers (seconds)
-#define ACCELERATION_TIME 0.5 
-#define FORWARD_MOVEMENT_TIME 3
-#define WAIT_TIME 1
-
-// the number of distances to travel
-#define DISTANCE_NUMBER 1
-
-// used for more smooth route ending
-#define DISTANCE_FOR_NEW_ROUTE_MIN_1 0.2
-#define DISTANCE_FOR_NEW_ROUTE_MIN_2 0.4
-
-// the ways to build new route when STATE_NEW_ROUTE triggered
-#define NEW_ROUTE_MODE__HYPOT_TO_THE_END_POINT 0   // in this mode the robot will build hypotenuse from the current destination to the end destination
-#define NEW_ROUTE_MODE__BACK_TO_THE_START_COURSE 1 // in this mode the robot will be trying to get back to the start course
-
-// gyroscope errors
-#define ANGLE_ERROR_RATIO_1 -0.0847*(M_PI/180)
-#define ANGLE_ERROR_RATIO_2 -0.0032*(M_PI/180)
-#define ANGLE_ERROR_CHANGE_ERROR_TIME 13.76
-#define ANGLE_ERROR_BASE_ERROR 0.1*(M_PI/180)
-
-#define SPEED_COEFFICIENT 4                       // experimentally found. Used to calculate speedRatio 
-
-//#define USE_US_SENSOR                           // uncomment to turn on ultrasonic sensors
-
-// set up ultra sonic sensors
-#ifdef USE_US_SENSOR
-  #define US_SCAN_DELAY 0.2 // the delay between ultrasonic scans (seconds)
-  // minimum distances to obstacles from which the robot changes its behaviour
-  #define DISTANCE_MIN1 5
-  #define DISTANCE_MIN2 15
-  #define DISTANCE_MIN3 25
-  //UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
-  NewPing usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID, 400);
-#endif
-
-// uncomment "OUTPUT_READABLE_EULER" if you want to see Euler angles
-// (in degrees) calculated from the quaternions coming from the FIFO.
-// Note that Euler angles suffer from gimbal lock (for more info, see
-// http://en.wikipedia.org/wiki/Gimbal_lock)
-//#define OUTPUT_READABLE_EULER
-
-// uncomment "OUTPUT_READABLE_YAWPITCHROLL" if you want to see the yaw/
-// pitch/roll angles (in degrees) calculated from the quaternions coming
-// from the FIFO. Note this also requires gravity vector calculations.
-// Also note that yaw/pitch/roll angles suffer from gimbal lock (for
-// more info, see: http://en.wikipedia.org/wiki/Gimbal_lock)
-#define OUTPUT_READABLE_YAWPITCHROLL
-
-
-#define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
-
 
 // class default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -185,8 +281,10 @@ MPU6050 mpu;                                      // gyroscope library variable
  * ========================================================================= */
 
 // set up motors
-AF_DCMotor motor1(2,MOTOR12_64KHZ);
-AF_DCMotor motor2(1,MOTOR12_8KHZ);
+//AF_DCMotor motor1(2,MOTOR12_64KHZ);
+//AF_DCMotor motor2(1,MOTOR12_8KHZ);
+MotorsController motor1(7, 6 ,5);
+MotorsController motor2(9, 8 ,10);
 //AF_DCMotor motor3(3,MOTOR34_64KHZ);
 //AF_DCMotor motor4(4,MOTOR34_8KHZ);
 
@@ -215,8 +313,8 @@ float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gra
 
 // timers
 uint32_t DMPTimer;                 // used only for DMP delays
-uint32_t timer                     // used for any other program needs;
-double lastDMPReceptionTimeElapsed // time elapsed since last DMP reception;
+uint32_t timer;                    // used for any other program needs;
+double lastDMPReceptionTimeElapsed;// time elapsed since last DMP reception;
 double accelerationTimeElapsed;    // time elapsed while in the STATE_ACCELERATION;
 double forwardMovementTimeElapsed; // time elapsed while in the STATE_MOVE_FORWARD;
 double waitTimeElapsed;            // time elapsed while in the STATE_WAIT;
@@ -260,6 +358,8 @@ char motorsStateOld;
 
 // distances to obstacles received from ultrasonic sensors
 long distance_FrontMid, distance_FrontLeft, distance_FrontRight;
+// previous values of distances will be saved here. It's needed to prevent random zeros we get from sensors
+long distance_FrontMidOld, distance_FrontLeftOld, distance_FrontRightOld;
 
 //long oldDistance;
 
@@ -267,7 +367,8 @@ bool ignoreRoute;                  // not used currently
 
 int speedRatio;                    // the value of this variable depends on courseAngle and used to turn the robot left or right
 
-int robotState;                    // the of the robot. See STATE_ globals
+int robotState;                    // the state of the robot. See STATE_ globals
+int robotStateOld;                 // the previous state of the robot 
 
 int accelerationStage;             // not used currently
 
@@ -280,6 +381,8 @@ int newRouteMode;                  // stores the value of one of the NEW_ROUTE_M
 // needed for NEW_ROUTE_MODE__BACK_TO_THE_START_COURSE
 double correctionAngle;           
 double correctionDistance;
+
+byte nextSensor;                   // stores the id of the next sensor to read (see SENSOR_ globals)
 
 
 
@@ -311,7 +414,7 @@ void setup() {
     // initialize serial communication
     // (115200 chosen because it is required for Teapot Demo output, but it's
     // really up to you depending on your project)
-    Serial.begin(9600);
+    Serial.begin(115200);
     while (!Serial); // wait for Leonardo enumeration, others continue immediately
 
     // NOTE: 8MHz or slower host processors, like the Teensy @ 3.3v or Ardunio
@@ -344,12 +447,12 @@ void setup() {
     mpu.setZGyroOffset(-85);
     mpu.setZAccelOffset(1788); // 1688 factory default for my test chip*/
     
-    mpu.setXGyroOffset(75);
-    mpu.setYGyroOffset(-31);
-    mpu.setZGyroOffset(18);
-    mpu.setXAccelOffset(1278);
-    mpu.setYAccelOffset(-429);
-    mpu.setZAccelOffset(1598);
+    mpu.setXGyroOffset(81);
+    mpu.setYGyroOffset(-26);
+    mpu.setZGyroOffset(86);
+    mpu.setXAccelOffset(1421);
+    mpu.setYAccelOffset(-411);
+    mpu.setZAccelOffset(1624);
 
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
@@ -412,6 +515,7 @@ void setup() {
 
     robotState = STATE_ON_ROUTE;
     //robotState = STATE_MOVE_FORWARD;  
+    //robotState = STATE_WAIT;
 
     accelerationStage = 1;
 
@@ -424,7 +528,15 @@ void setup() {
 
     correctionAngle = 0;
 
-    lastUSScanTimeElapsed = 0;
+    #ifdef USE_US_SENSOR
+      lastUSScanTimeElapsed = 0;
+    #endif
+
+    nextSensor = SENSOR_GYRO;
+
+    distance_FrontMidOld = 400;
+    distance_FrontLeftOld = 400;
+    distance_FrontRightOld = 400;
 }
 
 
@@ -446,7 +558,7 @@ void loop() {
     lastDMPReceptionTimeElapsed += dt;*/
 
     
-    if (lastDMPReceptionTimeElapsed > DMP_DATA_DELAY) {
+    /*if (lastDMPReceptionTimeElapsed > DMP_DATA_DELAY) {
       // wait for MPU is ready to transmit data
       while (!mpuInterrupt);
       lastDMPReceptionTimeElapsed = 0;
@@ -455,13 +567,14 @@ void loop() {
       // reset FIFO so it won't overflow
       mpu.resetFIFO();
       mpuInterrupt = false;
-    }
+    }*/
     
     // we need to receive data from gyroscope at first so wait while mpuInterrupt will become true
     if (deltaAngle == -1000) while (!mpuInterrupt);
 
     // wait for MPU interrupt or extra packet(s) available
     while (!mpuInterrupt && (fifoCount < packetSize) || blockTransmission) {
+        robotStateOld = robotState;
         // calculate delta time
         dt2 = (double)(micros() - timer) / 1000000;
         timer = micros();
@@ -473,23 +586,27 @@ void loop() {
 
         // scan for obstacles
         #ifdef USE_US_SENSOR
-          lastUSScanTimeElapsed += dt2;
-          if (lastUSScanTimeElapsed >= US_SCAN_DELAY) {
-            lastUSScanTimeElapsed = 0;
+          if (nextSensor == SENSOR_US_ALL && robotState != STATE_WAIT) {
+            nextSensor = SENSOR_GYRO;
+            //lastUSScanTimeElapsed += dt2;
+            //if (lastUSScanTimeElapsed >= US_SCAN_DELAY) {
+            //lastUSScanTimeElapsed = 0;
             //mpu.setSleepEnabled(true);
             // send a ping and call echoCheck to test if ping is complete
-            usSensor_FrontMid.ping_timer(echoCheck);
-            /*delay(50);
-            distance_FrontMid = usSensor_FrontMid.ping_cm(); //usSensor_FrontMid.scan();
-            if (distance_FrontMid <= DISTANCE_MIN3) {
-              robotState = STATE_AVOID_OBSTACLE;
-              Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println(" CM");
-            }*/
-            /*distance_FrontMid = usSensor_FrontMid.ping_cm(); //usSensor_FrontMid.scan();
-            if (distance_FrontMid <= DISTANCE_MIN3) {
-              robotState = STATE_AVOID_OBSTACLE;
-            }*/
-            //mpu.setSleepEnabled(false);
+            //usSensor_FrontMid.ping_timer(echoCheck);
+            //lastUSScanTimeElapsed = micros();
+            //delay(50);
+            distance_FrontMid = usSensor_FrontMid.ping_cm();
+            delay(33);
+            distance_FrontRight = 100;//usSensor_FrontRight.ping_cm();
+            //delay(50);
+            distance_FrontLeft = 100;//usSensor_FrontLeft.ping_cm();
+            //delay(50);
+            Serial.print("                          ");Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println(" CM");
+            Serial.print("                          ");Serial.print("usSensor_FrontRight: ");Serial.print(distance_FrontRight);Serial.println(" CM");
+            Serial.print("                          ");Serial.print("usSensor_FrontLeft: ");Serial.print(distance_FrontLeft);Serial.println(" CM");
+            robotStateOld = robotState;
+            robotState = STATE_AVOID_OBSTACLE;
           }
         #endif
 
@@ -505,9 +622,10 @@ void loop() {
         // the handle of the STATE_ globals
         switch (robotState) {
           case STATE_ON_ROUTE:
-            motorsState = 'f';
+            //motorsState = 'f';   //was breaking the STATE_AVOID_OBSTACLE
             break;
           case STATE_CORRECT_COURSE:
+            Serial.println("STATE_CORRECT_COURSE");
             courseAngle += correctionAngle;
             //speedRatio = lround(1.5 * map(lround(abs(courseAngle * RADIANS_TO_DEGREES)), 0, 180, 0, 255));
             //Serial.print("mappedOld: ");Serial.println(speedRatio);
@@ -518,7 +636,8 @@ void loop() {
             // scopes needed to delete speed1 and speed2
             {
               // constrain the speed because if it's too slow wheels can stop moving and we don't want the robot moves too fast because it's difficult to handle.
-              // We add or subtract speedRatio to the BASE_MOTOR_SPEED which depends on the sign of the courseAngle. Thus it will turn left or right base on the courseAngle
+              // We add or subtract speedRatio to the BASE_MOTOR_SPEED which depends on the sign of the courseAngle. Thus the robot will turn left or right base on the courseAngle.
+              // Reference to the constrain() function: https://www.arduino.cc/en/Reference/Constrain
               int speed1 = constrain(BASE_MOTOR_SPEED - sign(courseAngle) * speedRatio, BASE_MOTOR_SPEED_MIN, BASE_MOTOR_SPEED_MAX);
               int speed2 = constrain(BASE_MOTOR_SPEED + sign(courseAngle) * speedRatio, BASE_MOTOR_SPEED_MIN, BASE_MOTOR_SPEED_MAX);
               motor1.setSpeed(speed1);
@@ -532,6 +651,7 @@ void loop() {
             courseAngle -= correctionAngle;
             break;
           case STATE_NEW_ROUTE:
+            Serial.println("STATE_NEW_ROUTE");
             //if (travelDistance <= 0.5)
             
             if (newRouteMode == NEW_ROUTE_MODE__HYPOT_TO_THE_END_POINT) {
@@ -543,21 +663,21 @@ void loop() {
                 //deltaAngle = asin(abs(coords.x) / travelDistance * coords.x) + deltaAngle * sign(courseAngle);
                 
                 // calculate deltaAngle. It is the angle between the hypotenuse and the cathetus along the y axis
-                deltaAngle = asin(coords.x / travelDistance) + deltaAngle;
+                deltaAngle += asin(coords.x / travelDistance);
                 
                 //if (deltaAngle <= -180 || deltaAngle >= 180) deltaAngle = -deltaAngle;
                 coords.x = 0;
                 coords.y = 0;
-                Serial.print("STATE_NEW_ROUTE:   new distance: ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(deltaAngle);Serial.println(" rad");
+                Serial.print("STATE_NEW_ROUTE:   new distance: ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(deltaAngle * RADIANS_TO_DEGREES);Serial.println(" deg");
               } else if (travelDistance > DISTANCE_FOR_NEW_ROUTE_MIN_2) {                
                 // make the angle 2 times less so the robot will end its route more smooth 
-                deltaAngle = asin(coords.x / travelDistance) / 2 + deltaAngle;
+                deltaAngle += (asin(coords.x / travelDistance) / 2);
                 
                 //if (deltaAngle <= -180 || deltaAngle >= 180) deltaAngle = -deltaAngle;
                 
                 coords.x = 0;
                 coords.y = 0;
-                Serial.print("STATE_NEW_ROUTE:   new distance (smoothed): ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(deltaAngle);Serial.println(" rad");
+                Serial.print("STATE_NEW_ROUTE:   new distance (smoothed): ");Serial.print(travelDistance);Serial.println(" m");Serial.print(" new angle: ");Serial.print(deltaAngle * RADIANS_TO_DEGREES);Serial.println(" deg");
               } else {
                 Serial.print("STATE_NEW_ROUTE: too short distance: ");Serial.print(travelDistance);Serial.println(" m");
                 // if new distance is too short then follow the old route
@@ -573,23 +693,21 @@ void loop() {
             }
             break;
           case STATE_AVOID_OBSTACLE:
+            Serial.println("STATE_AVOID_OBSTACLE");
             #ifdef USE_US_SENSOR
               // an obstacle ahead
-              if (distance_FrontMid <= DISTANCE_MIN3) {
-                // it's just the turn right yet
-                motorsState = 'r';
-                motor1.setSpeed(BASE_MOTOR_SPEED);
-                motor2.setSpeed(BASE_MOTOR_SPEED - 50);
-                //Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println("CM");
-                //usSensor_FrontMid.printDistanceToSerial();
-              } else {
+              motorsState = getMotorsStateByDistancesToObstacles(distance_FrontMid, distance_FrontLeft, distance_FrontRight);
+              if (motorsState == 'f') {
                 motor1.setSpeed(BASE_MOTOR_SPEED);
                 motor2.setSpeed(BASE_MOTOR_SPEED);
+                robotState = robotStateOld;
+              } else {
                 robotState = STATE_ON_ROUTE;
               }
             #endif
             break;
           case STATE_DISTANCE_REACHED:
+            Serial.println("STATE_DISTANCE_REACHED");
             distanceCount++;
             // all distances are reached
             if (distanceCount == DISTANCE_NUMBER) {
@@ -654,12 +772,12 @@ void loop() {
           // not completed yet
           case STATE_TURN:
             Serial.println("STATE_TURN");
-            if (abs(courseAngle) < 0.17) {
-              motorsState = 's';
+            if (abs(courseAngle) < COURSE_DEVIATION_MIN) {
+              motorsState = 'f';
               robotState = STATE_NEW_ROUTE;
             } else {
-              motor1.setSpeed(courseAngle < 0 ? BASE_MOTOR_SPEED - 10 : 80);
-              motor2.setSpeed(courseAngle > 0 ? BASE_MOTOR_SPEED - 10 : 80);
+              //motor1.setSpeed(courseAngle < 0 ? BASE_MOTOR_SPEED - 20 : 0);
+              //motor2.setSpeed(courseAngle > 0 ? BASE_MOTOR_SPEED - 20 : 0);
               motorsState = courseAngle < 0 ? 'r' : 'l';
             }
             break;
@@ -672,20 +790,23 @@ void loop() {
         if (isRobotStopped) return;
 
         
-        if ((lastDMPReceptionTimeElapsed > DMP_DATA_DELAY) && (robotState != STATE_ACCELERATION)) {
-          while (!mpuInterrupt) {/*Serial.println("!mpuInterrupt2");*/}
+        /*if ((lastDMPReceptionTimeElapsed > DMP_DATA_DELAY) && (robotState != STATE_ACCELERATION)) {
+          while (!mpuInterrupt);
           lastDMPReceptionTimeElapsed = 0;
           blockTransmission = false;
         } else {
           mpu.resetFIFO();
           mpuInterrupt = false;
-        }
+        }*/
     }
 
-    blockTransmission = true;
+    //blockTransmission = true;
     // reset interrupt flag and get INT_STATUS byte
     mpuInterrupt = false;
     mpuIntStatus = mpu.getIntStatus();
+    nextSensor = SENSOR_US_ALL;
+    //Serial.print("DMP time: ");Serial.println(lastDMPReceptionTimeElapsed);
+    lastDMPReceptionTimeElapsed = 0;
 
     // get current FIFO count
     fifoCount = mpu.getFIFOCount();
@@ -745,26 +866,29 @@ void loop() {
         dt = (double)(micros() - DMPTimer) / 1000000;
         DMPTimer = micros();
         travelTime += dt;
+        Serial.print("DMP time: ");Serial.println(dt);
 
         // get yaw (gyroscope z axis value)
         yaw = ypr[0];
-        if (deltaAngle == -1000) deltaAngle = 0; //-yaw;
+        if (deltaAngle == -1000) deltaAngle = -yaw;
 
         // getting rid of gyroscope errors
-        if (travelTime <= ANGLE_ERROR_CHANGE_ERROR_TIME)
-          yaw -= (ANGLE_ERROR_RATIO_1 * travelTime + ANGLE_ERROR_BASE_ERROR);
-        else
-          yaw += (ANGLE_ERROR_RATIO_2 * travelTime - ANGLE_ERROR_BASE_ERROR - ANGLE_ERROR_RATIO_1 * ANGLE_ERROR_CHANGE_ERROR_TIME);
+        #ifdef USE_GYROSCOPE_ERRORS
+          if (travelTime <= ANGLE_ERROR_CHANGE_ERROR_TIME)
+            yaw -= (ANGLE_ERROR_RATIO_1 * travelTime + ANGLE_ERROR_BASE_ERROR);
+          else
+            yaw -= (ANGLE_ERROR_RATIO_2 * travelTime - ANGLE_ERROR_BASE_ERROR - ANGLE_ERROR_RATIO_1 * ANGLE_ERROR_CHANGE_ERROR_TIME);
+        #endif
           
         courseAngle = yaw + deltaAngle;
 
         // the gyroscope starts to show opposite values when it turns more then 180 degrees left or right around z axis
         // but we need to work with values above 180 degrees
-        if (abs(courseAngle) > 180) {
+        if (abs(courseAngle) > M_PI) {
           courseAngle = -sign(courseAngle) * (2 * M_PI - abs(yaw)); 
         }
         
-        Serial.print("course: ");Serial.println(courseAngle * RADIANS_TO_DEGREES);
+        Serial.print("course: " + String(courseAngle * RADIANS_TO_DEGREES) + " (delta: " + String(deltaAngle * RADIANS_TO_DEGREES) + ")");
 
         coords.x += v * sin(courseAngle) * dt;
         coords.y += v * cos(courseAngle) * dt;
@@ -777,10 +901,9 @@ void loop() {
         } else if (robotState != STATE_AVOID_OBSTACLE && robotState != STATE_MOVE_FORWARD && robotState != STATE_WAIT &&
                    robotState != STATE_TURN) {
           Serial.print("state: ");Serial.println(robotState);
-          /*if (abs(courseAngle) >= 1.57) {
+          if (abs(courseAngle) >= COURSE_DEVIATION_MAX) {
             robotState = STATE_TURN;
-          } else */
-          if (abs(coords.x) > X_DEVIATION_MAX && changeRoute) {
+          } else if (abs(coords.x) > X_DEVIATION_MAX && changeRoute) {
             robotState = STATE_NEW_ROUTE;
           } else if (correctionAngle != 0 && coords.x < X_TURN_DEVIATION) {
             // the correctionAngle no more needed
@@ -829,6 +952,8 @@ void moveRobot(char motorsState)
       break;
     case 'b':
       Serial.println("backward");
+      motor1.setSpeed(BASE_MOTOR_SPEED);
+      motor2.setSpeed(BASE_MOTOR_SPEED);
       motor1.run(BACKWARD);
       motor2.run(BACKWARD);
       delay(10);
@@ -836,12 +961,16 @@ void moveRobot(char motorsState)
     case 'l':
       Serial.println("left");
       //motor1.run(BACKWARD);
+      motor1.setSpeed(0);
+      motor2.setSpeed(BASE_MOTOR_SPEED);
       motor1.run(FORWARD);
       motor2.run(FORWARD);
       delay(10);
       break;
     case 'r':
       Serial.println("right");
+      motor1.setSpeed(BASE_MOTOR_SPEED);
+      motor2.setSpeed(0);
       motor1.run(FORWARD);
       //motor2.run(BACKWARD);
       motor2.run(FORWARD);
@@ -882,5 +1011,64 @@ int sign(double value)
     }
     // Don't do anything here!
   }
-#endif
 
+char getMotorsStateByDistancesToObstacles(long distance_FrontMid, long distance_FrontLeft, long distance_FrontRight)
+{
+  if (distance_FrontMid == 0) {
+    distance_FrontMid = distance_FrontMidOld;
+    Serial.print("usSensor_FrontMid (corrected): ");Serial.print(distance_FrontMid);Serial.println(" CM");
+  } else
+    distance_FrontMidOld = distance_FrontMid;
+  if (distance_FrontLeft == 0) 
+    distance_FrontLeft = distance_FrontLeftOld;
+  else
+    distance_FrontLeftOld = distance_FrontLeft;
+  if (distance_FrontRight == 0) 
+    distance_FrontRight = distance_FrontRightOld;
+  else
+    distance_FrontRightOld = distance_FrontRight;
+  // Go backward when an obstacle is too close to turn
+  if ((distance_FrontMid <= DISTANCE_MIN1) || (distance_FrontLeft <= DISTANCE_MIN1) || (distance_FrontRight <= DISTANCE_MIN1)){   
+    Serial.println("<= DISTANCE_MIN1");
+    //usSensor_FrontMid.printDistanceToSerial();
+    //usSensor_FrontLeft.printDistanceToSerial();
+    //usSensor_FrontRight.printDistanceToSerial();
+    return 'b';
+  }
+  // If there is a too narrow tunnel ahead
+  else if ((distance_FrontLeft <= DISTANCE_MIN2) && ( distance_FrontRight <= DISTANCE_MIN2)) {
+    Serial.println("left <= DISTANCE_MIN2, right <= DISTANCE_MIN2");
+    //usSensor_FrontLeft.printDistanceToSerial();
+    //usSensor_FrontRight.printDistanceToSerial();
+    Serial.println("----------------------");
+    // Go right if the right obstacle is farther
+    if (distance_FrontLeft < distance_FrontRight)
+    {
+      return 'r';
+    }
+    // Go left otherwise
+    else {
+      return 'l';
+    }
+  }
+  // If there is a close obstacle ahead
+  else if (distance_FrontMid <= DISTANCE_MIN3) {
+    Serial.println("mid <= DISTANCE_MIN3");
+    //usSensor_FrontMid.printDistanceToSerial();
+    // Go right if the right obstacle is farther
+    if (distance_FrontLeft < distance_FrontRight)
+    {
+      return 'r';
+    }
+    // Go left otherwise
+    else {
+      return 'l';
+    }
+  }
+  else {
+    //Serial.println ("No obstacle detected. going forward");
+    //delay (15);
+    return 'f';
+  }
+}
+#endif
