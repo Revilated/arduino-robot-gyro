@@ -573,10 +573,10 @@ void loop() {
     if (deltaAngle == -1000) while (!mpuInterrupt);
 
     // wait for MPU interrupt or extra packet(s) available
-    int k = 0;
+    int _k = 0;
     while (!mpuInterrupt && (fifoCount < packetSize) || blockTransmission) {
-        k++;
-        Serial.println("while num: " + k);
+        _k++;
+        Serial.println("while num: " + String(_k));
         robotStateOld = robotState;
         // calculate delta time
         dt2 = (double)(micros() - timer) / 1000000;
@@ -703,11 +703,11 @@ void loop() {
               if (motorsState == 'f') {
                 motor1.setSpeed(BASE_MOTOR_SPEED);
                 motor2.setSpeed(BASE_MOTOR_SPEED);
-                robotState = robotStateOld;
+                //robotState = robotStateOld;
+                robotState = getStateByDeviations(courseAngle, coords, correctionAngle, correctionDistance);
               } else {
                 robotState = STATE_ON_ROUTE;
               }
-              robotState = STATE_ON_ROUTE;
             #endif
             break;
           case STATE_DISTANCE_REACHED:
@@ -906,34 +906,8 @@ void loop() {
         } else if (robotState != STATE_AVOID_OBSTACLE && robotState != STATE_MOVE_FORWARD && robotState != STATE_WAIT &&
                    robotState != STATE_TURN) {
           Serial.print("state: ");Serial.println(robotState);
-          if (abs(courseAngle) >= COURSE_DEVIATION_MAX) {
-            robotState = STATE_TURN;
-          } else if (abs(coords.x) > X_DEVIATION_MAX && changeRoute) {
-            robotState = STATE_NEW_ROUTE;
-          } else if (correctionAngle != 0 && coords.x < X_TURN_DEVIATION) {
-            // the correctionAngle no more needed
-            correctionAngle = 0;
-            correctionDistance = 0;
-            robotState = STATE_CORRECT_COURSE;
-          } else {
-            robotState = STATE_CORRECT_COURSE;
-            //robotState = STATE_ON_ROUTE;
-          }
+          robotState = getStateByDeviations(courseAngle, coords, correctionAngle, correctionDistance); 
         }
-          /*if (abs(courseAngle) <= COURSE_DEVIATION_ERROR_RAD) {
-            motorsState = 'f';
-            motor1.setSpeed(150);
-            motor2.setSpeed(150);
-          } else if (courseAngle < 0) {
-            motorsState = 'r';
-            motor1.setSpeed(150);
-            motor2.setSpeed(80);
-          } else {
-            motorsState = 'l';
-            motor1.setSpeed(80);
-            motor2.setSpeed(150);
-          }*/
-        
         Serial.print("X, Y coords: ");Serial.print(coords.x);Serial.print(" ");Serial.println(coords.y);
 
         // blink LED to indicate activity
@@ -1000,6 +974,26 @@ int sign(double value)
     return 1;
   else
     return -1;
+}
+
+int getStateByDeviations(double courseAngle, Coordinates coords, double& correctionAngle, double& correctionDistance)
+{
+  if (abs(courseAngle) >= COURSE_DEVIATION_MAX) {
+    return STATE_TURN;
+  } 
+  else if (abs(coords.x) > X_DEVIATION_MAX && changeRoute) {
+    return STATE_NEW_ROUTE;
+  } 
+  else if (correctionAngle != 0 && coords.x < X_TURN_DEVIATION) {
+    // the correctionAngle no more needed
+    correctionAngle = 0;
+    correctionDistance = 0;
+    return STATE_CORRECT_COURSE;  
+  } 
+  else {
+    return STATE_CORRECT_COURSE;
+    //robotState = STATE_ON_ROUTE;
+  }  
 }
 
 // checks the ultrasonic ping status
