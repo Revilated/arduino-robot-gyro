@@ -573,7 +573,10 @@ void loop() {
     if (deltaAngle == -1000) while (!mpuInterrupt);
 
     // wait for MPU interrupt or extra packet(s) available
+    int k = 0;
     while (!mpuInterrupt && (fifoCount < packetSize) || blockTransmission) {
+        k++;
+        Serial.println("while num: " + k);
         robotStateOld = robotState;
         // calculate delta time
         dt2 = (double)(micros() - timer) / 1000000;
@@ -704,6 +707,7 @@ void loop() {
               } else {
                 robotState = STATE_ON_ROUTE;
               }
+              robotState = STATE_ON_ROUTE;
             #endif
             break;
           case STATE_DISTANCE_REACHED:
@@ -774,7 +778,8 @@ void loop() {
             Serial.println("STATE_TURN");
             if (abs(courseAngle) < COURSE_DEVIATION_MIN) {
               motorsState = 'f';
-              robotState = STATE_NEW_ROUTE;
+              //robotState = STATE_NEW_ROUTE;
+              robotState = STATE_ON_ROUTE;
             } else {
               //motor1.setSpeed(courseAngle < 0 ? BASE_MOTOR_SPEED - 20 : 0);
               //motor2.setSpeed(courseAngle > 0 ? BASE_MOTOR_SPEED - 20 : 0);
