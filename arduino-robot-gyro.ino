@@ -113,6 +113,7 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
   #define DISTANCE_MIN_TUNNEL 15
   #define DISTANCE_MIN_SIDE 10
   #define DISTANCE_MIN_FRONT 35
+  #define DISTANCE_MIN_SLOWER 45
   //UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
   NewPing usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID, 400);
   NewPing usSensor_FrontRight(TRIG_PIN_FRONT_RIGHT, ECHO_PIN_FRONT_RIGHT, 400);
@@ -387,7 +388,6 @@ double correctionAngle;
 double correctionDistance;
 
 byte nextSensor;                   // stores the id of the next sensor to read (see SENSOR_ID_ globals)
-
 
 
 
@@ -923,8 +923,8 @@ void loop() {
         
         Serial.print("course: " + String(courseAngle * RADIANS_TO_DEGREES) + " (delta: " + String(deltaAngle * RADIANS_TO_DEGREES) + ")");
 
-        coords.x += v * sin(courseAngle) * dt;
-        coords.y += v * cos(courseAngle) * dt;
+        coords.x += getDirection(motorsState) * v * sin(courseAngle) * dt;
+        coords.y += getDirection(motorsState) * v * cos(courseAngle) * dt;
         distanceTraveled += v * dt;
         Serial.print("distance: ");Serial.print(distanceTraveled);Serial.print(" ");Serial.print("y: ");Serial.println(coords.y);
         // the distance is reached when the robot has traveled TRAVEL_DISTANCE meters along y axis
@@ -968,7 +968,7 @@ void moveRobot(char motorsState)
     case 'l':
       Serial.println("left");
       //motor1.setSpeed(0);
-      motor1.setSpeed(BASE_MOTOR_SPEED_MIN);
+      motor1.setSpeed(BASE_MOTOR_SPEED);
       motor2.setSpeed(BASE_MOTOR_SPEED);
       //motor1.run(FORWARD);
       motor1.run(BACKWARD);
@@ -978,7 +978,7 @@ void moveRobot(char motorsState)
     case 'r':
       Serial.println("right");
       motor1.setSpeed(BASE_MOTOR_SPEED);
-      motor2.setSpeed(BASE_MOTOR_SPEED_MIN);
+      motor2.setSpeed(BASE_MOTOR_SPEED);
       //motor2.setSpeed(0);
       motor1.run(FORWARD);
       //motor2.run(FORWARD);
@@ -991,6 +991,12 @@ void moveRobot(char motorsState)
       motor2.run(RELEASE);
       delay(10);
       break;
+    case '-':
+      Serial.println("slower");
+      motor1.run(FORWARD);
+      motor2.run(FORWARD);
+      motor1.setSpeed(BASE_MOTOR_SPEED - 30);
+      motor2.setSpeed(BASE_MOTOR_SPEED - 30);
     default:
       break;
   }
@@ -1024,6 +1030,34 @@ int getStateByDeviations(double courseAngle, Coordinates coords, double& correct
     return STATE_CORRECT_COURSE;
     //robotState = STATE_ON_ROUTE;
   }  
+}
+
+// == 1 if moving forward, == -1 if backward and 0 otherwise
+int getDirection(char motorsState)
+{
+  switch(motorsState) {
+    case 'f':
+      return 1;
+      break;
+    case 'b':
+      return -1;
+      break;
+    case 'l':
+      return 1;
+      break;
+    case 'r':
+      return 1;
+      break;
+    case 's':
+      return 0;
+      break;
+    case '-':
+      return 1;
+      break;
+    default:
+      return 0;
+      break;
+  }
 }
 
 // checks the ultrasonic ping status
@@ -1102,6 +1136,11 @@ char getMotorsStateByDistancesToObstacles(long distance_FrontMid, long distance_
     else {
       return 'l';
     }
+  }
+  // Move slower if there is an obstacle close ahead
+  else if (distance_FrontMid <= DISTANCE_MIN_SLOWER) {
+    Serial.println("<= DISTANCE_MIN_SLOWER");
+    return '-';
   }
   else {
     //Serial.println ("No obstacle detected. going forward");
