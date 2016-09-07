@@ -109,7 +109,7 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
 #ifdef USE_US_SENSOR
   #define US_SCAN_DELAY 0.04 // the delay between ultrasonic scans (seconds)
   // minimum distances to obstacles from which the robot changes its behaviour
-  #define DISTANCE_MIN_BACK 7
+  #define DISTANCE_MIN_BACK 5
   #define DISTANCE_MIN_TUNNEL 15
   #define DISTANCE_MIN_SIDE 10
   #define DISTANCE_MIN_FRONT 35
@@ -633,7 +633,8 @@ void loop() {
             distance_FrontLeft = usSensor_FrontLeft.ping_cm();
             delay(50);*/
             //robotStateOld = robotState;
-            robotState = STATE_AVOID_OBSTACLE;
+            if (robotState != STATE_TURN)
+              robotState = STATE_AVOID_OBSTACLE;
           }
         #endif
 
