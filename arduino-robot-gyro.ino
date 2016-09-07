@@ -49,7 +49,7 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
 #define COURSE_DEVIATION_MIN 10*(M_PI/180)        // minimum available deviation from course
 #define Y_NEGATIVE_MAX -0.03                      // maximum availbale y axis negative value (used to stop the robot when it somehow starts to move in wrong direction)
 
-#define TRAVEL_DISTANCE 4                         // the distance the robot have to travel (meters)
+#define TRAVEL_DISTANCE 3                         // the distance the robot have to travel (meters)
 
 // the base speed used on motors
 #define BASE_MOTOR_SPEED 70
@@ -97,22 +97,26 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
 #define SPEED_COEFFICIENT 12                       // experimentally found. Used to calculate speedRatio 
 
 // id's of robot's sensors
-#define SENSOR_GYRO 0							                // gyroscope
-#define SENSOR_US_ALL 1							              // all available ultrasonics
+#define SENSOR_ID_GYRO 0							             // gyroscope
+#define SENSOR_ID_US_ALL 1							           // all available ultrasonics
+#define SENSOR_ID_US_FRONT_MID 2                   // front mid ultrasonic 
+#define SENSOR_ID_US_FRONT_RIGHT 3                 // front right ultrasonic 
+#define SENSOR_ID_US_FRONT_LEFT 4                  // front left ultrasonic 
 
 #define USE_US_SENSOR                           // uncomment to turn on ultrasonic sensors
 
 // set up ultra sonic sensors
 #ifdef USE_US_SENSOR
-  #define US_SCAN_DELAY 0.2 // the delay between ultrasonic scans (seconds)
+  #define US_SCAN_DELAY 0.04 // the delay between ultrasonic scans (seconds)
   // minimum distances to obstacles from which the robot changes its behaviour
-  #define DISTANCE_MIN1 5
-  #define DISTANCE_MIN2 15
-  #define DISTANCE_MIN3 35
+  #define DISTANCE_MIN_BACK 7
+  #define DISTANCE_MIN_TUNNEL 15
+  #define DISTANCE_MIN_SIDE 10
+  #define DISTANCE_MIN_FRONT 35
   //UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
-  NewPing usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID, 200);
-  //NewPing usSensor_FrontRight(TRIG_PIN_FRONT_RIGHT, ECHO_PIN_FRONT_RIGHT, 200);
-  //NewPing usSensor_FrontLeft(TRIG_PIN_FRONT_LEFT, ECHO_PIN_FRONT_LEFT, 200);
+  NewPing usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID, 400);
+  NewPing usSensor_FrontRight(TRIG_PIN_FRONT_RIGHT, ECHO_PIN_FRONT_RIGHT, 400);
+  NewPing usSensor_FrontLeft(TRIG_PIN_FRONT_LEFT, ECHO_PIN_FRONT_LEFT, 400);
 #endif
 
 // uncomment "OUTPUT_READABLE_EULER" if you want to see Euler angles
@@ -382,7 +386,7 @@ int newRouteMode;                  // stores the value of one of the NEW_ROUTE_M
 double correctionAngle;           
 double correctionDistance;
 
-byte nextSensor;                   // stores the id of the next sensor to read (see SENSOR_ globals)
+byte nextSensor;                   // stores the id of the next sensor to read (see SENSOR_ID_ globals)
 
 
 
@@ -532,7 +536,7 @@ void setup() {
       lastUSScanTimeElapsed = 0;
     #endif
 
-    nextSensor = SENSOR_GYRO;
+    nextSensor = SENSOR_ID_GYRO;
 
     distance_FrontMidOld = 400;
     distance_FrontLeftOld = 400;
@@ -573,11 +577,8 @@ void loop() {
     if (deltaAngle == -1000) while (!mpuInterrupt);
 
     // wait for MPU interrupt or extra packet(s) available
-    int _k = 0;
     while (!mpuInterrupt && (fifoCount < packetSize) || blockTransmission) {
-        _k++;
-        Serial.println("while num: " + String(_k));
-        robotStateOld = robotState;
+        //robotStateOld = robotState;
         // calculate delta time
         dt2 = (double)(micros() - timer) / 1000000;
         timer = micros();
@@ -589,8 +590,12 @@ void loop() {
 
         // scan for obstacles
         #ifdef USE_US_SENSOR
-          if (nextSensor == SENSOR_US_ALL && robotState != STATE_WAIT) {
-            nextSensor = SENSOR_GYRO;
+          if (nextSensor != SENSOR_ID_GYRO) 
+            lastUSScanTimeElapsed += dt2;
+          if ((nextSensor >= SENSOR_ID_US_FRONT_MID || nextSensor <= SENSOR_ID_US_FRONT_LEFT)
+              && robotState != STATE_WAIT && lastUSScanTimeElapsed >= US_SCAN_DELAY) {
+            lastUSScanTimeElapsed = 0;
+            //nextSensor = SENSOR_ID_GYRO;
             //lastUSScanTimeElapsed += dt2;
             //if (lastUSScanTimeElapsed >= US_SCAN_DELAY) {
             //lastUSScanTimeElapsed = 0;
@@ -599,23 +604,42 @@ void loop() {
             //usSensor_FrontMid.ping_timer(echoCheck);
             //lastUSScanTimeElapsed = micros();
             //delay(50);
-            distance_FrontMid = usSensor_FrontMid.ping_cm();
-            delay(33);
-            distance_FrontRight = 100;//usSensor_FrontRight.ping_cm();
-            //delay(50);
-            distance_FrontLeft = 100;//usSensor_FrontLeft.ping_cm();
-            //delay(50);
-            Serial.print("                          ");Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println(" CM");
-            Serial.print("                          ");Serial.print("usSensor_FrontRight: ");Serial.print(distance_FrontRight);Serial.println(" CM");
-            Serial.print("                          ");Serial.print("usSensor_FrontLeft: ");Serial.print(distance_FrontLeft);Serial.println(" CM");
-            robotStateOld = robotState;
+            switch(nextSensor) {
+              case SENSOR_ID_US_FRONT_MID: 
+                distance_FrontMid = usSensor_FrontMid.ping_cm();
+                Serial.print("                          ");Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println(" CM");
+                nextSensor = SENSOR_ID_US_FRONT_RIGHT;
+                robotStateOld = robotState;
+                break;
+              case SENSOR_ID_US_FRONT_RIGHT: 
+                distance_FrontRight = usSensor_FrontRight.ping_cm();
+                Serial.print("                          ");Serial.print("usSensor_FrontRight: ");Serial.print(distance_FrontRight);Serial.println(" CM");
+                nextSensor = SENSOR_ID_US_FRONT_LEFT;
+                break;
+              case SENSOR_ID_US_FRONT_LEFT: 
+                distance_FrontLeft = usSensor_FrontLeft.ping_cm();
+                Serial.print("                          ");Serial.print("usSensor_FrontLeft: ");Serial.print(distance_FrontLeft);Serial.println(" CM");
+                nextSensor = SENSOR_ID_GYRO;
+                break;
+              default:
+                break;     
+            }
+            /*distance_FrontMid = usSensor_FrontMid.ping_cm();
+            delay(50);
+            //distance_FrontRight = 100;
+            distance_FrontRight = usSensor_FrontRight.ping_cm();
+            delay(50);
+            //distance_FrontLeft = 100;
+            distance_FrontLeft = usSensor_FrontLeft.ping_cm();
+            delay(50);*/
+            //robotStateOld = robotState;
             robotState = STATE_AVOID_OBSTACLE;
           }
         #endif
 
         /*if (robotState != STATE_MOVE_FORWARD && robotState != STATE_WAIT) {
           distance_FrontMid = usSensor_FrontMid.scan();
-          if (distance_FrontMid <= DISTANCE_MIN3) {
+          if (distance_FrontMid <= DISTANCE_MIN_FRONT) {
             robotState = STATE_AVOID_OBSTACLE;
           } else if (robotState == STATE_AVOID_OBSTACLE) {
             robotState = STATE_NEW_ROUTE;
@@ -688,6 +712,7 @@ void loop() {
                 changeRoute = false;
               }
               robotState = STATE_ON_ROUTE;
+              //robotState = STATE_CORRECT_COURSE;
             // this mode doesn't work fine yet  
             } else if (newRouteMode == NEW_ROUTE_MODE__BACK_TO_THE_START_COURSE) {
               correctionAngle = -courseAngle + deltaAngle;
@@ -701,10 +726,11 @@ void loop() {
               // an obstacle ahead
               motorsState = getMotorsStateByDistancesToObstacles(distance_FrontMid, distance_FrontLeft, distance_FrontRight);
               if (motorsState == 'f') {
-                motor1.setSpeed(BASE_MOTOR_SPEED);
-                motor2.setSpeed(BASE_MOTOR_SPEED);
+                //motor1.setSpeed(BASE_MOTOR_SPEED);
+                //motor2.setSpeed(BASE_MOTOR_SPEED);
                 //robotState = robotStateOld;
                 robotState = getStateByDeviations(courseAngle, coords, correctionAngle, correctionDistance);
+                robotState = robotStateOld == STATE_DISTANCE_REACHED ? robotStateOld : robotState;
               } else {
                 robotState = STATE_ON_ROUTE;
               }
@@ -779,7 +805,8 @@ void loop() {
             if (abs(courseAngle) < COURSE_DEVIATION_MIN) {
               motorsState = 'f';
               //robotState = STATE_NEW_ROUTE;
-              robotState = STATE_ON_ROUTE;
+              //robotState = STATE_ON_ROUTE;
+              robotState = STATE_CORRECT_COURSE;
             } else {
               //motor1.setSpeed(courseAngle < 0 ? BASE_MOTOR_SPEED - 20 : 0);
               //motor2.setSpeed(courseAngle > 0 ? BASE_MOTOR_SPEED - 20 : 0);
@@ -809,7 +836,7 @@ void loop() {
     // reset interrupt flag and get INT_STATUS byte
     mpuInterrupt = false;
     mpuIntStatus = mpu.getIntStatus();
-    nextSensor = SENSOR_US_ALL;
+    nextSensor = SENSOR_ID_US_FRONT_MID;
     //Serial.print("DMP time: ");Serial.println(lastDMPReceptionTimeElapsed);
     lastDMPReceptionTimeElapsed = 0;
 
@@ -939,20 +966,22 @@ void moveRobot(char motorsState)
       break;
     case 'l':
       Serial.println("left");
-      //motor1.run(BACKWARD);
-      motor1.setSpeed(0);
+      //motor1.setSpeed(0);
+      motor1.setSpeed(BASE_MOTOR_SPEED_MIN);
       motor2.setSpeed(BASE_MOTOR_SPEED);
-      motor1.run(FORWARD);
+      //motor1.run(FORWARD);
+      motor1.run(BACKWARD);
       motor2.run(FORWARD);
       delay(10);
       break;
     case 'r':
       Serial.println("right");
       motor1.setSpeed(BASE_MOTOR_SPEED);
-      motor2.setSpeed(0);
+      motor2.setSpeed(BASE_MOTOR_SPEED_MIN);
+      //motor2.setSpeed(0);
       motor1.run(FORWARD);
-      //motor2.run(BACKWARD);
-      motor2.run(FORWARD);
+      //motor2.run(FORWARD);
+      motor2.run(BACKWARD);
       delay(10);
       break;
     case 's':
@@ -1003,7 +1032,7 @@ int getStateByDeviations(double courseAngle, Coordinates coords, double& correct
     if (usSensor_FrontMid.check_timer()) { // This is how you check to see if the ping was received.
       // Here's where you can add code.
       distance_FrontMid = usSensor_FrontMid.ping_cm(); //usSensor_FrontMid.scan();
-      if (distance_FrontMid <= DISTANCE_MIN3) {
+      if (distance_FrontMid <= DISTANCE_MIN_FRONT) {
         robotState = STATE_AVOID_OBSTACLE;
         Serial.print("usSensor_FrontMid: ");Serial.print(distance_FrontMid);Serial.println(" CM");
       }
@@ -1027,16 +1056,25 @@ char getMotorsStateByDistancesToObstacles(long distance_FrontMid, long distance_
   else
     distance_FrontRightOld = distance_FrontRight;
   // Go backward when an obstacle is too close to turn
-  if ((distance_FrontMid <= DISTANCE_MIN1) || (distance_FrontLeft <= DISTANCE_MIN1) || (distance_FrontRight <= DISTANCE_MIN1)){   
-    Serial.println("<= DISTANCE_MIN1");
+  if ((distance_FrontMid <= DISTANCE_MIN_BACK) || (distance_FrontLeft <= DISTANCE_MIN_BACK) || (distance_FrontRight <= DISTANCE_MIN_BACK)){   
+    Serial.println("<= DISTANCE_MIN_BACK");
     //usSensor_FrontMid.printDistanceToSerial();
     //usSensor_FrontLeft.printDistanceToSerial();
     //usSensor_FrontRight.printDistanceToSerial();
     return 'b';
   }
+  // Correct course if side obstacles are too close
+  else if (distance_FrontLeft <= DISTANCE_MIN_SIDE) {
+    Serial.println("left <= DISTANCE_MIN_SIDE");
+    return 'r';
+  }
+  else if (distance_FrontRight <= DISTANCE_MIN_SIDE) {
+    Serial.println("right <= DISTANCE_MIN_SIDE");
+    return 'l';
+  }
   // If there is a too narrow tunnel ahead
-  else if ((distance_FrontLeft <= DISTANCE_MIN2) && ( distance_FrontRight <= DISTANCE_MIN2)) {
-    Serial.println("left <= DISTANCE_MIN2, right <= DISTANCE_MIN2");
+  else if ((distance_FrontLeft <= DISTANCE_MIN_TUNNEL) && ( distance_FrontRight <= DISTANCE_MIN_TUNNEL)) {
+    Serial.println("left <= DISTANCE_MIN_TUNNEL, right <= DISTANCE_MIN_TUNNEL");
     //usSensor_FrontLeft.printDistanceToSerial();
     //usSensor_FrontRight.printDistanceToSerial();
     Serial.println("----------------------");
@@ -1051,8 +1089,8 @@ char getMotorsStateByDistancesToObstacles(long distance_FrontMid, long distance_
     }
   }
   // If there is a close obstacle ahead
-  else if (distance_FrontMid <= DISTANCE_MIN3) {
-    Serial.println("mid <= DISTANCE_MIN3");
+  else if (distance_FrontMid <= DISTANCE_MIN_FRONT) {
+    Serial.println("mid <= DISTANCE_MIN_FRONT");
     //usSensor_FrontMid.printDistanceToSerial();
     // Go right if the right obstacle is farther
     if (distance_FrontLeft < distance_FrontRight)
