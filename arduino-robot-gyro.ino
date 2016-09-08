@@ -35,7 +35,7 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
 
 #define DMP_DATA_DELAY 0.2                         // the delay between data packages from gyroscope (seconds)
 
-#define ROBOT_VELOCITY_EQ_TO_BASE_MOTOR_SPEED 0.38 // experimentally calculated robot's velocity (m/s)
+#define ROBOT_VELOCITY_EQ_TO_BASE_MOTOR_SPEED 0.31//0.38 // experimentally calculated robot's velocity (m/s)
 
 #define RADIANS_TO_DEGREES 180/M_PI
 
@@ -49,7 +49,7 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
 #define COURSE_DEVIATION_MIN 10*(M_PI/180)        // minimum available deviation from course
 #define Y_NEGATIVE_MAX -0.03                      // maximum availbale y axis negative value (used to stop the robot when it somehow starts to move in wrong direction)
 
-#define TRAVEL_DISTANCE 3                         // the distance the robot have to travel (meters)
+#define TRAVEL_DISTANCE 4                         // the distance the robot have to travel (meters)
 
 // the base speed used on motors
 #define BASE_MOTOR_SPEED 70
@@ -109,9 +109,10 @@ enum Direction { FORWARD, BACKWARD, RELEASE, UNKNOWN };
 #ifdef USE_US_SENSOR
   #define US_SCAN_DELAY 0.04 // the delay between ultrasonic scans (seconds)
   // minimum distances to obstacles from which the robot changes its behaviour
-  #define DISTANCE_MIN_BACK 5
+  #define DISTANCE_MIN_BACKWARD_FRONT_MID 5
+  #define DISTANCE_MIN_BACKWARD_FRONT_SIDES 3.5
   #define DISTANCE_MIN_TUNNEL 15
-  #define DISTANCE_MIN_SIDE 10
+  #define DISTANCE_MIN_SIDE 22
   #define DISTANCE_MIN_FRONT 35
   #define DISTANCE_MIN_SLOWER 45
   //UltraSonicSensor usSensor_FrontMid(TRIG_PIN_FRONT_MID, ECHO_PIN_FRONT_MID);
@@ -968,8 +969,8 @@ void moveRobot(char motorsState)
     case 'l':
       Serial.println("left");
       //motor1.setSpeed(0);
-      motor1.setSpeed(BASE_MOTOR_SPEED);
-      motor2.setSpeed(BASE_MOTOR_SPEED);
+      motor1.setSpeed(BASE_MOTOR_SPEED_MAX);
+      motor2.setSpeed(BASE_MOTOR_SPEED_MAX);
       //motor1.run(FORWARD);
       motor1.run(BACKWARD);
       motor2.run(FORWARD);
@@ -977,8 +978,8 @@ void moveRobot(char motorsState)
       break;
     case 'r':
       Serial.println("right");
-      motor1.setSpeed(BASE_MOTOR_SPEED);
-      motor2.setSpeed(BASE_MOTOR_SPEED);
+      motor1.setSpeed(BASE_MOTOR_SPEED_MAX);
+      motor2.setSpeed(BASE_MOTOR_SPEED_MAX);
       //motor2.setSpeed(0);
       motor1.run(FORWARD);
       //motor2.run(FORWARD);
@@ -1043,10 +1044,10 @@ int getDirection(char motorsState)
       return -1;
       break;
     case 'l':
-      return 1;
+      return 0;
       break;
     case 'r':
-      return 1;
+      return 0;
       break;
     case 's':
       return 0;
@@ -1091,8 +1092,9 @@ char getMotorsStateByDistancesToObstacles(long distance_FrontMid, long distance_
   else
     distance_FrontRightOld = distance_FrontRight;
   // Go backward when an obstacle is too close to turn
-  if ((distance_FrontMid <= DISTANCE_MIN_BACK) || (distance_FrontLeft <= DISTANCE_MIN_BACK) || (distance_FrontRight <= DISTANCE_MIN_BACK)){   
-    Serial.println("<= DISTANCE_MIN_BACK");
+  if ((distance_FrontMid <= DISTANCE_MIN_BACKWARD_FRONT_MID) || (distance_FrontLeft <= DISTANCE_MIN_BACKWARD_FRONT_SIDES)
+      || (distance_FrontRight <= DISTANCE_MIN_BACKWARD_FRONT_SIDES)){   
+    Serial.println("<= DISTANCE_MIN_BACKWARD_FRONT_MID");
     //usSensor_FrontMid.printDistanceToSerial();
     //usSensor_FrontLeft.printDistanceToSerial();
     //usSensor_FrontRight.printDistanceToSerial();
